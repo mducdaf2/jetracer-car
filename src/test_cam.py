@@ -47,7 +47,7 @@ class SpeedTrack:
     # Khởi tạo xe 
     def initialize_hardware(self):
         """Khởi tạo JetRacer thông qua RacerController."""
-        self.car = N
+        self.car = NvidiaRacecar()
         rospy.loginfo("JetRacer hardware đã được khởi tạo qua RacerController.")
 
     # ========== CAMERA ============
