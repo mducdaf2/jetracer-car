@@ -126,7 +126,7 @@ class SpeedTrack:
                 if key == 27: # Kill bằng ESC
                     break
                 
-                self.car.throttle = 0.2
+                self.car.throttle = 0.
                 
                 
             self._record_frame()
