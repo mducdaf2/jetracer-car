@@ -141,6 +141,7 @@ class SpeedTrack:
         if hasattr(self, 'car') and self.car is not None:
             self.car.throttle = 0 
             self.car.steering = 0 
+            rospy.loginfo("Đã lưu và đóng file video.")
 
         if hasattr(self, 'video_writer') and self.video_writer is not None:
             self.video_writer.release()

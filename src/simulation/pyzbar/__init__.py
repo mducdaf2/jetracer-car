@@ -1,0 +1,1 @@
+# Mock pyzbar package init

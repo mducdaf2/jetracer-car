@@ -31,7 +31,3 @@ cmake-build-*/
 *.swo
 *~
 .DS_Store
-
-# Project-specific generated / local simulation files
-simulation/
-src/simulation/
