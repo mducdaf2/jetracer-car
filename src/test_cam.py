@@ -138,7 +138,7 @@ class SpeedTrack:
     # 1. Cleanup bộ nhớ của xé
     def cleanup(self):
         rospy.loginfo("Dừng robot và giải phóng tài nguyên...")
-        if hasattr(self, 'controller') and self.controller is not None:
+        if hasattr(self, 'car') and self.car is not None:
             self.car.throttle = 0 
             self.car.steering = 0 
 
