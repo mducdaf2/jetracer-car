@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>JetRacer Dataset Collector (Filename Labeling)</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #181818; color: #fff; margin: 20px; text-align: center; }
+        .main-container { display: flex; justify-content: center; gap: 20px; margin-top: 20px; }
+        .canvas-wrapper { position: relative; display: inline-block; border: 2px solid #00ff00; }
+        canvas { cursor: crosshair; display: block; }
+        .control-panel { background: #282828; padding: 20px; border-radius: 8px; width: 340px; text-align: left; }
+        label { font-weight: bold; margin-top: 12px; display: block; font-size: 14px; }
+        select, input, button { width: 100%; padding: 10px; margin-top: 6px; border-radius: 4px; border: none; box-sizing: border-box; }
+        select, input { background: #383838; color: #fff; }
+        button { font-weight: bold; cursor: pointer; margin-top: 12px; font-size: 14px; }
+        .btn-folder { background: #ff9800; color: #000; }
+        .btn-save { background: #28a745; color: #fff; font-size: 16px; margin-top: 20px; }
+        .task-box { background: #202020; padding: 12px; border-radius: 6px; border: 1px solid #444; margin-top: 10px; }
+        #log { margin-top: 15px; color: #ffc107; font-size: 13px; word-break: break-all; min-height: 40px; }
+    </style>
+</head>
+<body>
+
+    <h2>JetRacer Data Labeling Tool</h2>
+
+    <div class="main-container">
+        <div class="canvas-wrapper">
+            <canvas id="canvas" width="640" height="480"></canvas>
+        </div>
+
+        <div class="control-panel">
+            <label>IP & Topic Stream từ Jetson:</label>
+            <input type="text" id="streamUrl" value="http://10.3.93.91:8080/stream?topic=/csi_cam_0/image_raw">
+            <button style="background:#007bff; color:#fff;" onclick="reloadStream()">Kết nối lại Stream</button>
+
+            <hr style="border-color: #444; margin: 15px 0;">
+
+            <button class="btn-folder" onclick="selectRootFolder()">📁 Chọn Thư Mục Gốc Dataset</button>
+            <div id="folderStatus" style="font-size: 12px; color: #aaa; margin-top: 5px;">Thư mục: Downloads (Mặc định)</div>
+
+            <label style="margin-top: 15px;">Chọn Task Cần Thu Thập:</label>
+            <select id="taskSelect" onchange="switchTask()" style="background: #007bff; color: white; font-weight: bold;">
+                <option value="lane">1. TASK LANE (Bám làn - Filename X_Y)</option>
+                <option value="sign">2. TASK TRAFFIC SIGN (Biển báo - Filename Class_X_Y_W_H)</option>
+            </select>
+
+            <!-- Giao diện tùy chỉnh theo Task -->
+            <div id="taskUi" class="task-box">
+                <!-- Tự động render bằng JS -->
+            </div>
+
+            <button class="btn-save" onclick="captureAndSave()">LƯU ẢNH (NHÃN NHÚNG TÊN FILE)</button>
+            <div id="log">Đang tải luồng video...</div>
+        </div>
+    </div>
+
+    <img id="streamImg" crossOrigin="anonymous" style="display:none;">
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const streamImg = document.getElementById('streamImg');
+        const log = document.getElementById('log');
+
+        let currentTask = 'lane';
+        let isDrawing = false;
+        let startX, startY, endX, endY;
+        let selectedPoint = null;
+        let selectedBbox = null;
+
+        // Handles lưu thư mục
+        let rootHandle = null;
+        let laneImgHandle = null;
+        let signImgHandle = null;
+
+        async function selectRootFolder() {
+            if ('showDirectoryPicker' in window) {
+                try {
+                    rootHandle = await window.showDirectoryPicker();
+                    
+                    // Task Lane chỉ lưu ảnh
+                    const laneDir = await rootHandle.getDirectoryHandle('lane_dataset', { create: true });
+                    laneImgHandle = await laneDir.getDirectoryHandle('images', { create: true });
+
+                    // Task Sign cũng chỉ lưu ảnh
+                    const signDir = await rootHandle.getDirectoryHandle('sign_dataset', { create: true });
+                    signImgHandle = await signDir.getDirectoryHandle('images', { create: true });
+
+                    document.getElementById('folderStatus').innerText = `Đã chọn: ${rootHandle.name} (Đã tách /lane_dataset & /sign_dataset)`;
+                    document.getElementById('folderStatus').style.color = "#00ff00";
+                } catch (err) {
+                    console.log("Hủy chọn thư mục hoặc lỗi Origin.");
+                }
+            } else {
+                alert("Trình duyệt chặn chọn folder trực tiếp khi mở file local. Hãy mở bằng Edge/Chrome từ Windows!");
+            }
+        }
+
+        function switchTask() {
+            currentTask = document.getElementById('taskSelect').value;
+            selectedPoint = null;
+            selectedBbox = null;
+            const taskUi = document.getElementById('taskUi');
+
+            if (currentTask === 'lane') {
+                taskUi.innerHTML = `
+                    <span style="color:#00ffff; font-weight:bold;">Chế độ: Bám làn (Point X_Y)</span>
+                    <p style="font-size:12px; color:#ccc; margin: 5px 0;">Nhấp chuột chọn điểm mục tiêu. Lưu dạng:<br><b>[X]_[Y]_[timestamp].jpg</b></p>
+                `;
+            } else {
+                taskUi.innerHTML = `
+                    <span style="color:#00ff00; font-weight:bold;">Chế độ: Biển báo (Bounding Box)</span>
+                    <p style="font-size:12px; color:#ccc; margin: 5px 0;">Kéo khung xung quanh biển báo. Lưu dạng:<br><b>sign_[Class]_[X]_[Y]_[W]_[H]_[timestamp].jpg</b></p>
+                    <label>Loại biển báo:</label>
+                    <select id="signClass">
+                        <option value="0">0: Biển báo cấm</option>
+                        <option value="1">1: Biển đi thẳng</option>
+                        <option value="2">2: Biển rẽ trái</option>
+                        <option value="3">3: Biển rẽ phải</option>
+                        <option value="4">4: Đèn xanh</option>
+                        <option value="5">5: Đèn đỏ</option>
+                    </select>
+                `;
+            }
+            log.innerText = "Đã chuyển sang Task: " + currentTask.toUpperCase();
+        }
+
+        function reloadStream() {
+            streamImg.src = document.getElementById('streamUrl').value;
+        }
+
+        streamImg.onload = () => {
+            if (streamImg.naturalWidth && streamImg.naturalHeight) {
+                canvas.width = streamImg.naturalWidth;
+                canvas.height = streamImg.naturalHeight;
+            }
+        };
+
+        function render() {
+            if (streamImg.complete && streamImg.naturalWidth !== 0) {
+                ctx.drawImage(streamImg, 0, 0, canvas.width, canvas.height);
+                drawAnnotations();
+            }
+            requestAnimationFrame(render);
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            startX = e.clientX - rect.left;
+            startY = e.clientY - rect.top;
+
+            if (currentTask === 'lane') {
+                selectedPoint = { x: Math.round(startX), y: Math.round(startY) };
+                log.innerText = `Point Lane: X=${selectedPoint.x}, Y=${selectedPoint.y}`;
+            } else {
+                isDrawing = true;
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (currentTask === 'sign' && isDrawing) {
+                const rect = canvas.getBoundingClientRect();
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (currentTask === 'sign' && isDrawing) {
+                isDrawing = false;
+                const rect = canvas.getBoundingClientRect();
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
+
+                let x = Math.round(Math.min(startX, endX));
+                let y = Math.round(Math.min(startY, endY));
+                let w = Math.round(Math.abs(endX - startX));
+                let h = Math.round(Math.abs(endY - startY));
+
+                if (w > 5 && h > 5) {
+                    selectedBbox = { x, y, w, h };
+                    log.innerText = `BBox Sign: X=${x}, Y=${y}, W=${w}, H=${h}`;
+                }
+            }
+        });
+
+        function drawAnnotations() {
+            if (currentTask === 'lane' && selectedPoint) {
+                ctx.fillStyle = '#ff0000';
+                ctx.beginPath();
+                ctx.arc(selectedPoint.x, selectedPoint.y, 6, 0, 2 * Math.PI);
+                ctx.fill();
+            } else if (currentTask === 'sign') {
+                if (isDrawing) {
+                    ctx.strokeStyle = '#00ffff';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(startX, startY, endX - startX, endY - startY);
+                } else if (selectedBbox) {
+                    ctx.strokeStyle = '#00ff00';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(selectedBbox.x, selectedBbox.y, selectedBbox.w, selectedBbox.h);
+                }
+            }
+        }
+
+        async function saveFile(dirHandle, fileName, blobContent) {
+            if (dirHandle) {
+                const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+                const writable = await fileHandle.createWritable();
+                await writable.write(blobContent);
+                await writable.close();
+            } else {
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blobContent);
+                a.download = fileName;
+                a.click();
+            }
+        }
+
+        async function captureAndSave() {
+            if (!streamImg.complete || streamImg.naturalWidth === 0) {
+                alert("Chưa có luồng video!"); return;
+            }
+
+            const timestamp = Date.now();
+
+            // Canvas ẩn để tạo ảnh không chứa đường nét giao diện
+            const offCanvas = document.createElement('canvas');
+            offCanvas.width = canvas.width; 
+            offCanvas.height = canvas.height;
+            offCanvas.getContext('2d').drawImage(streamImg, 0, 0);
+
+            offCanvas.toBlob(async (imgBlob) => {
+                if (currentTask === 'lane') {
+                    if (!selectedPoint) { alert("Nhấp chọn 1 điểm trên làn đường trước!"); return; }
+                    
+                    // Tên file dạng: X_Y_timestamp.jpg
+                    const laneFileName = `${selectedPoint.x}_${selectedPoint.y}_${timestamp}.jpg`;
+                    await saveFile(laneImgHandle, laneFileName, imgBlob);
+
+                    log.innerText = `[LANE] Đã lưu: ${laneFileName}`;
+
+                } else if (currentTask === 'sign') {
+                    if (!selectedBbox) { alert("Vẽ khung Bounding Box trước!"); return; }
+                    
+                    const signClass = document.getElementById('signClass').value;
+                    const { x, y, w, h } = selectedBbox;
+
+                    // Tên file dạng: sign_class_x_y_w_h_timestamp.jpg
+                    const signFileName = `sign_${signClass}_${x}_${y}_${w}_${h}_${timestamp}.jpg`;
+                    await saveFile(signImgHandle, signFileName, imgBlob);
+
+                    log.innerText = `[SIGN] Đã lưu: ${signFileName}`;
+                }
+
+                selectedPoint = null;
+                selectedBbox = null;
+            }, 'image/jpeg');
+        }
+
+        // Khởi tạo
+        switchTask();
+        reloadStream();
+        render();
+    </script>
+</body>
+</html>

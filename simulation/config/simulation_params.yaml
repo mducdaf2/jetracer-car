@@ -1,4 +1,0 @@
-/simulation/odom_frame: odom
-/simulation/base_frame: base_link
-/simulation/publish_rate: 20.0
-/simulation/path_max_length: 1000
