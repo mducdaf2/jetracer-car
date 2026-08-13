@@ -33,3 +33,5 @@ cmake-build-*/
 *.swo
 *~
 .DS_Store
+.ipynb_checkpoints/
+*.ipynb_checkpoints
