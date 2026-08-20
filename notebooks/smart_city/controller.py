@@ -30,13 +30,20 @@ class RacecarController:
         #         để triệt tiêu bớt độ dịch chuyển tịnh tiến -> xoay gần tại chỗ hơn)
         # Các giá trị này BẮT BUỘC phải tự hiệu chỉnh bằng calibrate_turn_90()
         # vì phụ thuộc xe, mặt sàn, mức pin của từng người.
-        turn90_forward_duration_left=0.3,
-        turn90_reverse_duration_left=0.3,
-        turn90_forward_duration_right=0.3,
-        turn90_reverse_duration_right=0.3,
+        turn90_forward_duration_left=3,
+        turn90_reverse_duration_left=3,
+        turn90_forward_duration_right=3,
+        turn90_reverse_duration_right=3,
         # Thời gian dừng (throttle=0) giữa pha tiến và pha lùi, để ESC kịp
         # nhận lệnh đảo chiều. Nếu xe không chịu lùi, thử tăng giá trị này lên.
         pause_between_phases=0.15,
+        # "Kick-start": bắn ga cao hơn trong một khoảng ngắn ở đầu mỗi pha để
+        # thắng ma sát tĩnh. LƯU Ý: xe xuất phát từ trạng thái ĐỨNG YÊN HOÀN
+        # TOÀN nên ma sát tĩnh cao hơn nhiều so với lúc đang lăn — nếu kick
+        # quá ngắn, bánh chỉ vừa nhích đã bị cắt ga. Giá trị dưới đây chỉ là
+        # điểm khởi đầu, BẮT BUỘC phải tự test lại bằng diagnose_motor.py.
+        kick_throttle=0.5,
+        kick_duration=0.2,
     ):
         if NvidiaRacecar is None:
             raise RuntimeError(
@@ -66,6 +73,8 @@ class RacecarController:
             },
         }
         self.pause_between_phases = max(0.0, float(pause_between_phases))
+        self.kick_throttle = self._clamp(kick_throttle, 0.0, 1.0)
+        self.kick_duration = max(0.0, float(kick_duration))
 
         self.stop()
         # Bất kể chương trình kết thúc kiểu gì (bình thường, exception, Ctrl+C),
@@ -107,20 +116,33 @@ class RacecarController:
         self.car.throttle = 0.0
         self.car.steering = self.steering_config["STRAIGHT"]
 
-    def _run_timed(self, steering, throttle, duration):
+    def _run_timed(self, steering, throttle, duration, kick_throttle=0.0, kick_duration=0.0):
         """
         Chạy xe với góc lái/ga cho trước trong `duration` giây.
         Dùng try/finally để đảm bảo xe LUÔN được dừng, kể cả khi
         sleep() bị ngắt giữa chừng (Ctrl+C, lỗi cảm biến, exception khác...).
         Đây là điểm khác biệt an toàn quan trọng nhất so với bản gốc.
+
+        Nếu kick_duration > 0: trong `kick_duration` giây đầu tiên, ga sẽ
+        được bắn lên mức kick_throttle (cùng dấu với `throttle`) để thắng
+        ma sát tĩnh, sau đó mới hạ về mức `throttle` cho phần thời gian
+        còn lại. Hữu ích khi base_throttle quá thấp khiến xe chỉ rung bánh
+        mà gần như không di chuyển.
         """
         if duration < 0:
             raise ValueError("duration phải >= 0")
 
         self.car.steering = self._clamp(steering, -1.0, 1.0)
-        self.car.throttle = self._safe_throttle(throttle)
+
+        kick_duration = min(max(0.0, kick_duration), duration)
         try:
-            time.sleep(duration)
+            if kick_duration > 0 and kick_throttle:
+                kick_signed = kick_throttle if throttle >= 0 else -abs(kick_throttle)
+                self.car.throttle = self._safe_throttle(kick_signed)
+                time.sleep(kick_duration)
+
+            self.car.throttle = self._safe_throttle(throttle)
+            time.sleep(duration - kick_duration)
         finally:
             self.stop()
 
@@ -203,15 +225,22 @@ class RacecarController:
         speed_factor = self._clamp(speed_factor, 0.05, 1.0)
         throttle = self.base_throttle * speed_factor
 
-        # Pha 1: tiến + bẻ lái theo direction
-        self._run_timed(self.steering_config[direction], throttle, fwd_duration)
+        # Pha 1: tiến + bẻ lái theo direction (có kick-start để thắng ma sát tĩnh)
+        self._run_timed(
+            self.steering_config[direction], throttle, fwd_duration,
+            kick_throttle=self.kick_throttle, kick_duration=self.kick_duration,
+        )
 
         # Dừng ngắn giữa 2 pha để ESC kịp nhận lệnh đảo chiều
         if self.pause_between_phases > 0:
             time.sleep(self.pause_between_phases)
 
-        # Pha 2: lùi + bẻ lái ngược lại direction
-        self._run_timed(self.steering_config[opposite], -throttle, rev_duration)
+        # Pha 2: lùi + bẻ lái ngược lại direction (cũng cần kick-start vì
+        # lùi từ trạng thái đứng yên thường cần lực khởi động lớn hơn cả lúc tiến)
+        self._run_timed(
+            self.steering_config[opposite], -throttle, rev_duration,
+            kick_throttle=self.kick_throttle, kick_duration=self.kick_duration,
+        )
 
     def turn_90_left(self, speed_factor=0.6):
         """Rẽ trái 90 độ tại chỗ: tiến-rẽ trái, rồi lùi-rẽ phải."""
@@ -232,6 +261,11 @@ class RacecarController:
           - Nếu xe bị trôi/dịch quá nhiều về phía trước hoặc phía sau ->
             tăng reverse_duration (hoặc giảm forward_duration) để 2 pha
             cân bằng nhau hơn, giữ xe gần vị trí ban đầu.
+          - Nếu bánh chỉ rung nhẹ, xe gần như không di chuyển (chỉ 1-2cm) ->
+            tăng self.kick_throttle (VD 0.4 -> 0.55) hoặc self.kick_duration
+            (VD 0.08 -> 0.12) để có đủ lực thắng ma sát tĩnh lúc khởi động.
+            Cũng có thể base_throttle đang quá thấp, thử tăng base_throttle
+            hoặc dùng speed_factor cao hơn khi test.
 
         Khi tìm được cặp giá trị đúng, gán vào các tham số
         turn90_forward_duration_left/right, turn90_reverse_duration_left/right

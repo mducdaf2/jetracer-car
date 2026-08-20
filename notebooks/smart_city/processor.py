@@ -113,18 +113,27 @@ class YOLOProcessor:
         return img0
 
 
+import cv2
+import numpy as np
+
+
 class RoadProcessor:
-    """Xử lý riêng cho Mô hình Road Direction (Phân loại đa nhãn 3 hướng: Thẳng, Trái, Phải)"""
+    """Xử lý riêng cho Mô hình Road Obstacle/Status (Phân loại: FREE / BLOCKED)."""
 
     def __init__(self, img_size=(160, 160), threshold=0.5):
+        """:param img_size: Kích thước ảnh đầu vào cho model :param threshold: Ngưỡng
+
+        xác suất để kết luận là BLOCKED
+        """
         self.img_size = img_size
         self.threshold = threshold
-        self.labels = ['DRIVING', 'TURN_LEFT', 'TURN_RIGHT']
 
+        # Chuẩn hóa ImageNet
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
     def preprocess(self, frame):
+        """Resize, chuẩn hóa RGB và chuyển về định dạng NCHW."""
         img = cv2.resize(frame, self.img_size)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
 
@@ -135,19 +144,28 @@ class RoadProcessor:
         return img
 
     def postprocess(self, raw_output):
-        logits = raw_output.squeeze()
-        probs = 1.0 / (1.0 + np.exp(-logits))
+        """Hỗ trợ cả trường hợp Model trả về 1 Logit (Sigmoid) hoặc 2 Logits
 
-        possible_directions = []
-        scores = {}
+        (Softmax).
+        """
+        logits = np.array(raw_output).squeeze()
 
-        for i, label in enumerate(self.labels):
-            score = float(probs[i])
-            scores[label] = round(score, 4)
-            if score >= self.threshold:
-                possible_directions.append(label)
+        # Trường hợp 1: Model trả về 1 giá trị duy nhất (Sigmoid output)
+        if logits.ndim == 0 or logits.size == 1:
+            logit_val = float(logits)
+            prob_blocked = 1.0 / (1.0 + np.exp(-logit_val))
+
+        # Trường hợp 2: Model trả về 2 giá trị [logit_free, logit_blocked] (Softmax output)
+        else:
+            exp_logits = np.exp(logits - np.max(logits))  # Stable Softmax
+            probs = exp_logits / np.sum(exp_logits)
+            prob_blocked = float(probs[1])  # Giả định index 1 là BLOCKED
+
+        # Xác định trạng thái đường
+        status = 'BLOCKED' if prob_blocked >= self.threshold else 'FREE'
 
         return {
-            'possible_directions': possible_directions,
-            'probabilities': scores,
+            'status': status,  # 'FREE' hoặc 'BLOCKED'
+            'blocked_probability': round(prob_blocked, 4),
+            'free_probability': round(1.0 - prob_blocked, 4),
         }
