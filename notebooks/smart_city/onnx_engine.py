@@ -1,13 +1,26 @@
+import os
 import numpy as np
 import onnxruntime as ort
 
 class ONNXEngine:
-    def __init__(self, model_path):
-        # Lấy danh sách providers khả thi trên máy hiện tại
-        available_providers = ort.get_available_providers()
+    def __init__(self, model_path, cache_dir="./trt_cache"):
+        os.makedirs(cache_dir, exist_ok=True)
         
-        # Ưu tiên CUDA, nếu không có sẽ tự lấy CPU mà không báo warning
-        providers = [p for p in ['CUDAExecutionProvider', 'CPUExecutionProvider'] if p in available_providers]
+        # Giảm workspace xuống 512MB mỗi model (đủ cho Jetson Nano gánh 2 models)
+        trt_options = {
+            'device_id': 0,
+            'trt_max_workspace_size': 536870912,  # 512 MB
+            'trt_fp16_enable': True,
+            'trt_engine_cache_enable': True,
+            'trt_engine_cache_path': cache_dir,
+        }
+        
+        # Chỉ ưu tiên TensorRT và CUDA
+        providers = [
+            ('TensorrtExecutionProvider', trt_options),
+            'CUDAExecutionProvider',
+            'CPUExecutionProvider'
+        ]
         
         self.session = ort.InferenceSession(model_path, providers=providers)
         self.input_name = self.session.get_inputs()[0].name
