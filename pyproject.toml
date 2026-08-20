@@ -7,9 +7,11 @@ requires-python = ">=3.10"
 dependencies = [
     "gym-donkeycar",
     "gymnasium>=1.3.0",
+    "matplotlib>=3.10.9",
     "networkx>=3.4.2",
     "numpy>=2.2.6",
     "onnx>=1.22.0",
+    "onnxruntime<1.21.0",
     "opencv-python>=5.0.0.93",
     "traitlets>=5.16.1",
 ]

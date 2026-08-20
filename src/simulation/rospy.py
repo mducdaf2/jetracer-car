@@ -193,3 +193,9 @@ def read_control():
         _control_sub_shm = None
         return 0.0, 0.0
 
+# --- Bổ sung thêm vào cuối file rospy.py mock ---
+class _MockCore:
+    def is_initialized(self):
+        return True  # Luôn trả về True để bỏ qua bước init_node thật khi mock
+
+core = _MockCore()
