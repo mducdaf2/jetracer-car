@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>JetRacer Dataset Tool (Capture + Label tách rời)</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #181818; color: #fff; margin: 20px; text-align: center; }
+        .main-container { display: flex; justify-content: center; gap: 20px; margin-top: 20px; align-items: flex-start; }
+        .canvas-wrapper { position: relative; display: inline-block; border: 3px solid #555; }
+        .canvas-wrapper.ready { border-color: #00ff00; }
+        canvas { cursor: crosshair; display: block; max-width: 640px; }
+        .control-panel { background: #282828; padding: 20px; border-radius: 8px; width: 360px; text-align: left; }
+        label { font-weight: bold; margin-top: 12px; display: block; font-size: 14px; }
+        select, input, button { width: 100%; padding: 10px; margin-top: 6px; border-radius: 4px; border: none; box-sizing: border-box; }
+        select, input { background: #383838; color: #fff; }
+        button { font-weight: bold; cursor: pointer; margin-top: 12px; font-size: 14px; }
+        button:disabled { background: #444 !important; color: #888; cursor: not-allowed; }
+        .btn-folder { background: #ff9800; color: #000; }
+        .btn-capture { background: #dc3545; color: #fff; font-size: 18px; padding: 16px; }
+        .btn-save { background: #28a745; color: #fff; font-size: 16px; }
+        .btn-nav { background: #555; color: #fff; width: 48%; display: inline-block; }
+        .btn-action { background: #555; color: #fff; font-size: 12px; padding: 6px; margin-top: 6px; width: 48%; display: inline-block; }
+        .task-box { background: #202020; padding: 12px; border-radius: 6px; border: 1px solid #444; margin-top: 10px; }
+        .stats-box { background: #202020; padding: 10px; border-radius: 6px; border: 1px solid #444; margin-top: 10px; font-size: 12px; text-align: left; }
+        .stats-box div { display: flex; justify-content: space-between; padding: 2px 0; }
+        #log { margin-top: 15px; color: #ffc107; font-size: 13px; word-break: break-all; min-height: 40px; }
+        .hint { font-size: 11px; color: #888; margin-top: 8px; line-height: 1.5; }
+        kbd { background: #444; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+        .mode-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+        .mode-tabs button { margin-top: 0; }
+        .mode-tabs button.active { background: #007bff; color: #fff; }
+        .mode-tabs button.inactive { background: #383838; color: #aaa; }
+        .progress-bar-bg { background: #383838; border-radius: 4px; height: 8px; margin-top: 6px; overflow: hidden; }
+        .progress-bar-fill { background: #28a745; height: 100%; transition: width 0.2s; }
+        .done-badge { color: #28a745; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h2>JetRacer Dataset Tool <span style="font-size:13px; color:#00ff00;">(Capture &amp; Label tách rời)</span></h2>
+
+    <div class="mode-tabs" style="max-width: 1040px; margin: 0 auto 10px;">
+        <button id="tabCapture" onclick="switchMode('capture')">📷 CHỤP ẢNH</button>
+        <button id="tabLabel" onclick="switchMode('label')">🏷️ GÁN NHÃN</button>
+    </div>
+
+    <div class="main-container">
+        <div class="canvas-wrapper" id="canvasWrapper">
+            <canvas id="canvas" width="640" height="480"></canvas>
+        </div>
+
+        <div class="control-panel">
+            <div id="folderStatus" style="font-size: 12px; color: #aaa;">Chưa chọn thư mục gốc dataset</div>
+            <button class="btn-folder" onclick="selectRootFolder()">📁 Chọn Thư Mục Gốc Dataset</button>
+
+            <!-- ============ UI CHO CHẾ ĐỘ CHỤP ẢNH ============ -->
+            <div id="captureUi" style="display:none;">
+                <hr style="border-color: #444; margin: 15px 0;">
+                <label>IP & Topic Stream từ Jetson:</label> <!-- ĐÃ SỬA URL THÀNH /stream MẶC ĐỊNH -->
+                <input type="text" id="streamUrl" value="http://10.3.90.205:8080/stream?topic=/csi_cam_0/image_raw">
+                <button style="background:#007bff; color:#fff;" onclick="reloadStream()">Kết nối lại Stream</button>
+
+                <button class="btn-capture" onclick="captureRawFrame()">📸 CHỤP (Space)</button>
+
+                <div class="task-box">
+                    <label style="display:flex; align-items:center; gap:8px; margin-top:0;">
+                        <input type="checkbox" id="autoCaptureChk" style="width:auto;" onchange="toggleAutoCapture()">
+                        Tự động chụp mỗi
+                        <input type="number" id="autoCaptureMs" value="500" style="width:70px; display:inline-block;"> ms
+                    </label>
+                </div>
+
+                <div class="stats-box" id="captureStats">Đã chụp: 0 ảnh (phiên này)</div>
+                <div class="hint"><kbd>Space</kbd> chụp nhanh 1 ảnh</div>
+            </div>
+
+            <!-- ============ UI CHO CHẾ ĐỘ GÁN NHÃN ============ -->
+            <div id="labelUi" style="display:none;">
+                <hr style="border-color: #444; margin: 15px 0;">
+                <button class="btn-folder" onclick="selectRawFolderForLabeling()">📂 Chọn thư mục raw_captures cần gán nhãn</button>
+
+                <label>Task đang gán nhãn:</label>
+                <select id="taskSelect" onchange="switchTask()">
+                    <option value="lane">1. TASK LANE (Point X_Y)</option>
+                    <option value="sign">2. TASK TRAFFIC SIGN (BBox JSON)</option>
+                </select>
+
+                <div id="taskUi" class="task-box"></div>
+
+                <div style="display:flex; gap: 4%; margin-top: 10px;">
+                    <button class="btn-nav" onclick="gotoImage(currentImgIndex - 1)">⬅ Trước (←)</button>
+                    <button class="btn-nav" onclick="gotoImage(currentImgIndex + 1)">Sau ➡ (→)</button>
+                </div>
+                <button class="btn-action" style="width:100%;" onclick="jumpToNextUnlabeled()">⏭ Nhảy tới ảnh chưa gán nhãn tiếp theo</button>
+                <button class="btn-save" id="saveBtn" onclick="saveCurrentLabel()" disabled>💾 LƯU NHÃN (S)</button>
+
+                <div class="stats-box" id="labelProgress">Chưa tải danh sách ảnh</div>
+                <div class="hint">
+                    <kbd>0-6</kbd> chọn class &nbsp; <kbd>S</kbd> lưu &nbsp; <kbd>Z</kbd> xoá khung cuối &nbsp;
+                    <kbd>←/→</kbd> chuyển ảnh &nbsp; <kbd>Esc</kbd> huỷ khung đang vẽ &nbsp;
+                    Click vào khung đã vẽ để xoá riêng khung đó.
+                </div>
+            </div>
+
+            <div id="log">Chọn thư mục gốc dataset để bắt đầu.</div>
+        </div>
+    </div>
+
+    <img id="streamImg" crossOrigin="anonymous" style="display:none;">
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const streamImg = document.getElementById('streamImg');
+        const log = document.getElementById('log');
+        const canvasWrapper = document.getElementById('canvasWrapper');
+        const saveBtn = document.getElementById('saveBtn');
+
+        let appMode = 'capture'; // 'capture' | 'label'
+        let currentTask = 'lane';
+        let isDrawing = false;
+        let startX, startY, endX, endY;
+        let selectedPoint = null;
+        let bboxes = [];
+
+        // Handles thư mục
+        let rootHandle = null;
+        let rawCapturesHandle = null;
+        let laneImgHandle = null;
+        let signImgHandle = null, signLblHandle = null;
+
+        const SIGN_CLASSES = {
+            "0": "Biển báo cấm",
+            "1": "Biển đi thẳng",
+            "2": "Biển rẽ trái",
+            "3": "Biển rẽ phải",
+            "4": "Đèn xanh",
+            "5": "Đèn đỏ",
+            "6": "Vạch qua đường"
+        };
+
+        let sessionCaptureCount = 0;
+        let autoCaptureTimer = null;
+
+        // ===== LABEL MODE STATE =====
+        let rawImageFiles = [];      // [{name, handle}] đã sort theo tên
+        let currentImgIndex = -1;
+        let currentBitmap = null;    // ImageBitmap của ảnh raw đang hiển thị
+        let labelProgress = {};      // { "img_xxx.jpg": {lane:true, sign:true} }
+
+        // ===================== MODE SWITCH =====================
+        function switchMode(mode) {
+            appMode = mode;
+            document.getElementById('tabCapture').className = mode === 'capture' ? 'active' : 'inactive';
+            document.getElementById('tabLabel').className = mode === 'label' ? 'active' : 'inactive';
+            document.getElementById('captureUi').style.display = mode === 'capture' ? 'block' : 'none';
+            document.getElementById('labelUi').style.display = mode === 'label' ? 'block' : 'none';
+
+            if (mode === 'capture') {
+                stopAutoCapture();
+                reloadStream();
+            } else {
+                canvas.width = 640; canvas.height = 480;
+                ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#888'; ctx.font = '16px Segoe UI'; ctx.textAlign = 'center';
+                ctx.fillText('Chọn thư mục raw_captures để bắt đầu gán nhãn', canvas.width/2, canvas.height/2);
+                ctx.textAlign = 'left';
+            }
+        }
+
+        // ===================== IndexedDB: nhớ thư mục gốc =====================
+        const DB_NAME = "jetracer_label_tool";
+        const STORE_NAME = "handles";
+        const HANDLE_KEY = "rootDir";
+
+        function openHandleDB() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(DB_NAME, 1);
+                req.onupgradeneeded = () => req.result.createObjectStore(STORE_NAME);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+        async function saveHandleToDB(handle) {
+            const db = await openHandleDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, "readwrite");
+                tx.objectStore(STORE_NAME).put(handle, HANDLE_KEY);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        }
+        async function loadHandleFromDB() {
+            const db = await openHandleDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, "readonly");
+                const req = tx.objectStore(STORE_NAME).get(HANDLE_KEY);
+                req.onsuccess = () => resolve(req.result || null);
+                req.onerror = () => reject(req.error);
+            });
+        }
+        async function initAutoReconnectUI() {
+            const savedHandle = await loadHandleFromDB().catch(() => null);
+            if (!savedHandle) return;
+            const perm = await savedHandle.queryPermission({ mode: "readwrite" });
+            if (perm === "granted") { await setupDatasetFolders(savedHandle); return; }
+            const btn = document.createElement('button');
+            btn.style.background = "#6f42c1"; btn.style.color = "#fff";
+            btn.innerText = `🔓 Cấp lại quyền cho thư mục đã lưu (${savedHandle.name})`;
+            btn.onclick = async () => {
+                const newPerm = await savedHandle.requestPermission({ mode: "readwrite" });
+                if (newPerm === "granted") { await setupDatasetFolders(savedHandle); btn.remove(); }
+                else alert("Bạn cần cấp quyền để tool lưu file vào thư mục này.");
+            };
+            document.querySelector('.control-panel').insertBefore(btn, document.getElementById('folderStatus'));
+        }
+
+        async function ensureClassesJson(signDir) {
+            try {
+                const fileHandle = await signDir.getFileHandle('classes.json');
+                const file = await fileHandle.getFile();
+                const existing = JSON.parse(await file.text());
+                Object.keys(SIGN_CLASSES).forEach(k => delete SIGN_CLASSES[k]);
+                Object.entries(existing).forEach(([id, label]) => { SIGN_CLASSES[id] = label; });
+                return `classes.json đã có sẵn (${Object.keys(SIGN_CLASSES).length} lớp)`;
+            } catch (err) {
+                const newFileHandle = await signDir.getFileHandle('classes.json', { create: true });
+                const writable = await newFileHandle.createWritable();
+                await writable.write(JSON.stringify(SIGN_CLASSES, null, 4));
+                await writable.close();
+                return `Đã tự tạo classes.json mới (${Object.keys(SIGN_CLASSES).length} lớp)`;
+            }
+        }
+
+        async function setupDatasetFolders(handle) {
+            rootHandle = handle;
+            rawCapturesHandle = await rootHandle.getDirectoryHandle('raw_captures', { create: true });
+
+            const laneDir = await rootHandle.getDirectoryHandle('lane_dataset', { create: true });
+            laneImgHandle = await laneDir.getDirectoryHandle('images', { create: true });
+
+            const signDir = await rootHandle.getDirectoryHandle('sign_dataset', { create: true });
+            signImgHandle = await signDir.getDirectoryHandle('images', { create: true });
+            signLblHandle = await signDir.getDirectoryHandle('labels', { create: true });
+
+            const classesStatus = await ensureClassesJson(signDir);
+            await loadProgressFile();
+
+            document.getElementById('folderStatus').innerText = `Thư mục: ${rootHandle.name} | ${classesStatus}`;
+            document.getElementById('folderStatus').style.color = "#00ff00";
+            log.innerText = "Đã sẵn sàng.";
+            return classesStatus;
+        }
+
+        async function selectRootFolder() {
+            if (!('showDirectoryPicker' in window)) { alert("Hãy dùng Chrome/Edge!"); return; }
+            try {
+                const handle = await window.showDirectoryPicker({ mode: 'readwrite', id: 'jetracer-dataset-root' });
+                await setupDatasetFolders(handle);
+                await saveHandleToDB(handle);
+            } catch (err) { console.log("Hủy chọn thư mục.", err); }
+        }
+
+        // ===================== PROGRESS TRACKING (đã gán nhãn hay chưa) =====================
+        async function loadProgressFile() {
+            try {
+                const fh = await rootHandle.getFileHandle('label_progress.json');
+                const file = await fh.getFile();
+                labelProgress = JSON.parse(await file.text());
+            } catch (err) { labelProgress = {}; }
+        }
+        async function saveProgressFile() {
+            const fh = await rootHandle.getFileHandle('label_progress.json', { create: true });
+            const writable = await fh.createWritable();
+            await writable.write(JSON.stringify(labelProgress, null, 2));
+            await writable.close();
+        }
+        function markLabeled(rawName, task) {
+            if (!labelProgress[rawName]) labelProgress[rawName] = {};
+            labelProgress[rawName][task] = true;
+        }
+        function isLabeled(rawName, task) {
+            return !!(labelProgress[rawName] && labelProgress[rawName][task]);
+        }
+
+        // ===================== CHẾ ĐỘ CHỤP ẢNH =====================
+        // ĐÃ CẬP NHẬT HÀM reloadStream() ĐỂ TỰ ĐỘNG CHUẨN HÓA URL
+        function reloadStream() {
+            let url = document.getElementById('streamUrl').value.trim();
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                url = 'http://' + url;
+            }
+            streamImg.src = url;
+        }
+
+        streamImg.onload = () => {
+            if (appMode === 'capture' && streamImg.naturalWidth) {
+                canvas.width = streamImg.naturalWidth;
+                canvas.height = streamImg.naturalHeight;
+            }
+        };
+
+        // THÊM XỬ LÝ BÁO LỖI KHI CÓ LỖI TẢI ẢNH STREAM (CORS HOẶC SAI DẪN)
+        streamImg.onerror = () => {
+            if (appMode === 'capture') {
+                log.innerText = "⚠️ Lỗi tải stream! Kiểm tra lại URL (phải là /stream?) hoặc cấu hình CORS trên Jetson.";
+            }
+        };
+
+        function renderCapturePreview() {
+            if (appMode === 'capture' && streamImg.complete && streamImg.naturalWidth !== 0) {
+                ctx.drawImage(streamImg, 0, 0, canvas.width, canvas.height);
+            }
+            requestAnimationFrame(renderCapturePreview);
+        }
+        renderCapturePreview();
+
+        async function captureRawFrame() {
+            if (appMode !== 'capture') return;
+            if (!rawCapturesHandle) { alert("Hãy chọn thư mục gốc dataset trước!"); return; }
+            if (!streamImg.complete || streamImg.naturalWidth === 0) { alert("Chưa có luồng video!"); return; }
+
+            const off = document.createElement('canvas');
+            off.width = streamImg.naturalWidth; off.height = streamImg.naturalHeight;
+            off.getContext('2d').drawImage(streamImg, 0, 0);
+
+            off.toBlob(async (blob) => {
+                const fileName = `img_${Date.now()}.jpg`;
+                const fh = await rawCapturesHandle.getFileHandle(fileName, { create: true });
+                const writable = await fh.createWritable();
+                await writable.write(blob);
+                await writable.close();
+                sessionCaptureCount++;
+                document.getElementById('captureStats').innerText = `Đã chụp: ${sessionCaptureCount} ảnh (phiên này)`;
+                log.innerText = `Đã lưu raw: ${fileName}`;
+            }, 'image/jpeg', 0.92);
+        }
+
+        function toggleAutoCapture() {
+            const chk = document.getElementById('autoCaptureChk');
+            if (chk.checked) {
+                const ms = parseInt(document.getElementById('autoCaptureMs').value) || 500;
+                autoCaptureTimer = setInterval(captureRawFrame, ms);
+                log.innerText = `Auto-capture bật: chụp mỗi ${ms}ms`;
+            } else {
+                stopAutoCapture();
+            }
+        }
+        function stopAutoCapture() {
+            if (autoCaptureTimer) { clearInterval(autoCaptureTimer); autoCaptureTimer = null; }
+            const chk = document.getElementById('autoCaptureChk');
+            if (chk) chk.checked = false;
+        }
+
+        // ===================== CHẾ ĐỘ GÁN NHÃN =====================
+        async function selectRawFolderForLabeling() {
+            if (!('showDirectoryPicker' in window)) { alert("Hãy dùng Chrome/Edge!"); return; }
+            try {
+                const handle = await window.showDirectoryPicker({ mode: 'read', id: 'jetracer-raw-captures' });
+                rawImageFiles = [];
+                for await (const [name, entryHandle] of handle.entries()) {
+                    if (entryHandle.kind === 'file' && /\.(jpg|jpeg|png)$/i.test(name)) {
+                        rawImageFiles.push({ name, handle: entryHandle });
+                    }
+                }
+                rawImageFiles.sort((a, b) => a.name.localeCompare(b.name));
+                if (rawImageFiles.length === 0) { alert("Không tìm thấy ảnh nào trong thư mục này."); return; }
+                log.innerText = `Đã tải ${rawImageFiles.length} ảnh raw.`;
+                await gotoImage(0);
+            } catch (err) { console.log("Hủy chọn thư mục raw.", err); }
+        }
+
+        function switchTask() {
+            currentTask = document.getElementById('taskSelect').value;
+            selectedPoint = null; bboxes = [];
+            const taskUi = document.getElementById('taskUi');
+            if (currentTask === 'lane') {
+                taskUi.innerHTML = `<span style="color:#00ffff; font-weight:bold;">Point Lane</span>
+                    <p style="font-size:12px; color:#ccc; margin:5px 0;">Nhấp 1 điểm trên làn đường trong ảnh.</p>`;
+            } else {
+                taskUi.innerHTML = `<span style="color:#00ff00; font-weight:bold;">BBox Biển báo</span>
+                    <label>Loại biển báo chuẩn bị vẽ:</label>
+                    <select id="signClass">
+                        ${Object.entries(SIGN_CLASSES).map(([id,l]) => `<option value="${id}">${id}: ${l}</option>`).join('')}
+                    </select>
+                    <div style="margin-top: 8px;">
+                        <button class="btn-action" onclick="undoLastBbox()">↩️ Xóa khung cuối (Z)</button>
+                        <button class="btn-action" onclick="clearAllBboxes()">🗑️ Xóa tất cả</button>
+                    </div>`;
+            }
+            redrawCurrentImage();
+            updateLabelProgressBox();
+        }
+
+        async function gotoImage(index) {
+            if (rawImageFiles.length === 0) return;
+            if (index < 0) index = 0;
+            if (index >= rawImageFiles.length) index = rawImageFiles.length - 1;
+            currentImgIndex = index;
+            selectedPoint = null; bboxes = [];
+
+            const entry = rawImageFiles[currentImgIndex];
+            const file = await entry.handle.getFile();
+            currentBitmap = await createImageBitmap(file);
+            canvas.width = currentBitmap.width;
+            canvas.height = currentBitmap.height;
+            canvasWrapper.classList.add('ready');
+            saveBtn.disabled = false;
+            redrawCurrentImage();
+            updateLabelProgressBox();
+
+            const done = isLabeled(entry.name, currentTask);
+            log.innerText = `Ảnh ${currentImgIndex + 1}/${rawImageFiles.length}: ${entry.name}` + (done ? " — ĐÃ gán nhãn trước đó" : "");
+        }
+
+        function jumpToNextUnlabeled() {
+            for (let i = currentImgIndex + 1; i < rawImageFiles.length; i++) {
+                if (!isLabeled(rawImageFiles[i].name, currentTask)) { gotoImage(i); return; }
+            }
+            alert("Đã hết ảnh chưa gán nhãn cho task này!");
+        }
+
+        function updateLabelProgressBox() {
+            const box = document.getElementById('labelProgress');
+            if (rawImageFiles.length === 0) { box.innerText = "Chưa tải danh sách ảnh"; return; }
+            const doneCount = rawImageFiles.filter(f => isLabeled(f.name, currentTask)).length;
+            const pct = Math.round((doneCount / rawImageFiles.length) * 100);
+            box.innerHTML = `
+                <div><span>Ảnh hiện tại</span><span>${currentImgIndex + 1}/${rawImageFiles.length}</span></div>
+                <div><span>Đã gán nhãn (${currentTask})</span><span class="done-badge">${doneCount}/${rawImageFiles.length}</span></div>
+                <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${pct}%"></div></div>`;
+        }
+
+        function redrawCurrentImage() {
+            if (!currentBitmap) return;
+            ctx.drawImage(currentBitmap, 0, 0);
+            drawAnnotations();
+        }
+
+        // ===================== VẼ NHÃN (dùng chung) =====================
+        canvas.addEventListener('mousedown', (e) => {
+            if (appMode !== 'label' || !currentBitmap) return;
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+            startX = (e.clientX - rect.left) * scaleX;
+            startY = (e.clientY - rect.top) * scaleY;
+
+            if (currentTask === 'lane') {
+                selectedPoint = { x: Math.round(startX), y: Math.round(startY) };
+                redrawCurrentImage();
+            } else {
+                const clickedIdx = bboxes.findIndex(b => startX >= b.x && startX <= b.x + b.w && startY >= b.y && startY <= b.y + b.h);
+                if (clickedIdx !== -1) { bboxes.splice(clickedIdx, 1); redrawCurrentImage(); return; }
+                isDrawing = true; endX = startX; endY = startY;
+            }
+        });
+        canvas.addEventListener('mousemove', (e) => {
+            if (appMode !== 'label' || currentTask !== 'sign' || !isDrawing) return;
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+            endX = (e.clientX - rect.left) * scaleX;
+            endY = (e.clientY - rect.top) * scaleY;
+            redrawCurrentImage();
+        });
+        canvas.addEventListener('mouseup', (e) => {
+            if (appMode !== 'label' || currentTask !== 'sign' || !isDrawing) return;
+            isDrawing = false;
+            let x = Math.round(Math.min(startX, endX)), y = Math.round(Math.min(startY, endY));
+            let w = Math.round(Math.abs(endX - startX)), h = Math.round(Math.abs(endY - startY));
+            if (w > 5 && h > 5) {
+                const classId = document.getElementById('signClass').value;
+                bboxes.push({ class_id: parseInt(classId), label: SIGN_CLASSES[classId], x, y, w, h });
+            }
+            redrawCurrentImage();
+        });
+
+        function undoLastBbox() { if (bboxes.length > 0) { bboxes.pop(); redrawCurrentImage(); } }
+        function clearAllBboxes() { bboxes = []; redrawCurrentImage(); }
+
+        function drawAnnotations() {
+            if (currentTask === 'lane' && selectedPoint) {
+                ctx.fillStyle = '#ff0000';
+                ctx.beginPath(); ctx.arc(selectedPoint.x, selectedPoint.y, 6, 0, 2 * Math.PI); ctx.fill();
+            } else if (currentTask === 'sign') {
+                bboxes.forEach((box, index) => {
+                    ctx.strokeStyle = '#00ff00'; ctx.lineWidth = 2;
+                    ctx.strokeRect(box.x, box.y, box.w, box.h);
+                    ctx.fillStyle = '#00ff00'; ctx.font = '14px Segoe UI';
+                    ctx.fillText(`${index + 1}. ID:${box.class_id}`, box.x, box.y > 18 ? box.y - 4 : box.y + 14);
+                });
+                if (isDrawing) {
+                    ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 2;
+                    ctx.strokeRect(startX, startY, endX - startX, endY - startY);
+                }
+            }
+        }
+
+        // ===================== LƯU NHÃN =====================
+        async function saveCurrentLabel() {
+            if (currentImgIndex < 0 || !currentBitmap) return;
+            const rawEntry = rawImageFiles[currentImgIndex];
+            const rawBaseName = rawEntry.name.replace(/\.(jpg|jpeg|png)$/i, '');
+
+            const off = document.createElement('canvas');
+            off.width = canvas.width; off.height = canvas.height;
+            off.getContext('2d').drawImage(currentBitmap, 0, 0);
+
+            off.toBlob(async (blob) => {
+                if (currentTask === 'lane') {
+                    if (!selectedPoint) { alert("Nhấp chọn 1 điểm trên làn đường trước!"); return; }
+                    const outName = `${selectedPoint.x}_${selectedPoint.y}_${rawBaseName}.jpg`;
+                    const fh = await laneImgHandle.getFileHandle(outName, { create: true });
+                    const w = await fh.createWritable(); await w.write(blob); await w.close();
+                    markLabeled(rawEntry.name, 'lane');
+                    log.innerText = `[LANE] Đã lưu: ${outName}`;
+                } else {
+                    if (bboxes.length === 0) { alert("Hãy vẽ ít nhất 1 khung Bounding Box!"); return; }
+                    const outName = `${rawBaseName}.jpg`;
+                    const fh = await signImgHandle.getFileHandle(outName, { create: true });
+                    const w = await fh.createWritable(); await w.write(blob); await w.close();
+
+                    const jsonOutput = {
+                        image: outName, width: canvas.width, height: canvas.height,
+                        shapes: bboxes.map(b => {
+                            const xc = (b.x + b.w/2) / canvas.width, yc = (b.y + b.h/2) / canvas.height;
+                            const nw = b.w / canvas.width, nh = b.h / canvas.height;
+                            return { class_id: b.class_id, label: b.label,
+                                bbox_pixel: { x: b.x, y: b.y, w: b.w, h: b.h },
+                                bbox_yolo: [xc, yc, nw, nh].map(v => parseFloat(v.toFixed(6))) };
+                        })
+                    };
+                    const jfh = await signLblHandle.getFileHandle(`${rawBaseName}.json`, { create: true });
+                    const jw = await jfh.createWritable();
+                    await jw.write(JSON.stringify(jsonOutput, null, 4));
+                    await jw.close();
+                    markLabeled(rawEntry.name, 'sign');
+                    log.innerText = `[SIGN] Đã lưu ${bboxes.length} nhãn: ${rawBaseName}.json`;
+                }
+                await saveProgressFile();
+                updateLabelProgressBox();
+                jumpToNextUnlabeledOrStay();
+            }, 'image/jpeg', 0.95);
+        }
+
+        function jumpToNextUnlabeledOrStay() {
+            for (let i = currentImgIndex + 1; i < rawImageFiles.length; i++) {
+                if (!isLabeled(rawImageFiles[i].name, currentTask)) { gotoImage(i); return; }
+            }
+            if (currentImgIndex + 1 < rawImageFiles.length) gotoImage(currentImgIndex + 1);
+        }
+
+        // ===================== KEYBOARD SHORTCUTS =====================
+        document.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT') return;
+            if (appMode === 'capture' && e.code === 'Space') { e.preventDefault(); captureRawFrame(); return; }
+            if (appMode !== 'label') return;
+            if (e.key === 'ArrowRight') { gotoImage(currentImgIndex + 1); return; }
+            if (e.key === 'ArrowLeft') { gotoImage(currentImgIndex - 1); return; }
+            if (e.key.toLowerCase() === 's') { saveCurrentLabel(); return; }
+            if (e.key.toLowerCase() === 'z') { undoLastBbox(); return; }
+            if (e.key === 'Escape') { isDrawing = false; redrawCurrentImage(); return; }
+            if (currentTask === 'sign' && /^[0-6]$/.test(e.key)) {
+                const sel = document.getElementById('signClass');
+                if (sel) sel.value = e.key;
+            }
+        });
+
+        // Khởi tạo
+        switchMode('capture');
+        switchTask();
+        initAutoReconnectUI();
+    </script>
+</body>
+</html>

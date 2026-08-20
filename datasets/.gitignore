@@ -1,0 +1,6 @@
+# Ignore large dataset folders
+lane_dataset/
+sign_dataset/
+
+# Ignore ZIP files
+*.zip

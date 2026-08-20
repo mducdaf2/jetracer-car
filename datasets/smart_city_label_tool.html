@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Label Console · Hướng đi khả dĩ</title>
+<style>
+  :root{
+    --bg: #0B0F13;
+    --panel: #12171D;
+    --panel-2: #171D24;
+    --border: #232B33;
+    --border-soft: #1C232A;
+    --text: #E7ECF1;
+    --text-dim: #8A95A1;
+    --text-faint: #545F6B;
+    --straight: #49D3C4;
+    --left: #A392FF;
+    --right: #FFB454;
+    --skip: #5A6472;
+    --danger: #FF6B6B;
+    --mono: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; height:100%; background:var(--bg); color:var(--text);
+    font-family:var(--sans); overflow:hidden;
+  }
+  body{ display:flex; flex-direction:column; }
+
+  /* top bar */
+  .topbar{
+    display:flex; align-items:center; gap:16px;
+    padding:10px 18px; border-bottom:1px solid var(--border);
+    background:linear-gradient(180deg, #10151A, #0D1216);
+    flex-shrink:0;
+  }
+  .brand{ display:flex; align-items:baseline; gap:8px; margin-right:auto; }
+  .brand .mark{
+    width:9px; height:9px; border-radius:2px;
+    background:var(--straight); box-shadow:0 0 10px var(--straight);
+    flex-shrink:0;
+  }
+  .brand h1{ font-size:14px; font-weight:600; letter-spacing:0.02em; margin:0; }
+  .brand span{ font-family:var(--mono); font-size:11px; color:var(--text-faint); }
+
+  .filepicker{
+    display:flex; gap:8px; align-items:center;
+  }
+  .btn{
+    font-family:var(--sans); font-size:12.5px; font-weight:600;
+    color:var(--text); background:var(--panel-2); border:1px solid var(--border);
+    padding:7px 12px; border-radius:6px; cursor:pointer; white-space:nowrap;
+    transition:border-color .12s, background .12s;
+  }
+  .btn:hover{ border-color:#39444F; background:#1B222A; }
+  .btn:focus-visible{ outline:2px solid var(--straight); outline-offset:1px; }
+  .btn.primary{ background:#173832; border-color:#245349; color:#8FEFE1; }
+  .btn.primary:hover{ background:#1B453D; }
+  .btn.ghost{ background:transparent; }
+  .btn:disabled{ opacity:.35; cursor:not-allowed; }
+  input[type=file]{ display:none; }
+
+  /* main layout */
+  .main{ flex:1; display:flex; min-height:0; }
+  .stage{
+    flex:1; display:flex; align-items:center; justify-content:center;
+    position:relative; background:
+      radial-gradient(circle at 50% 40%, #0F1418 0%, #0A0D10 70%);
+    padding:24px;
+  }
+  .frame-shell{
+    position:relative; max-width:100%; max-height:100%;
+    border:1px solid var(--border); border-radius:10px; overflow:hidden;
+    background:#000; box-shadow:0 20px 60px rgba(0,0,0,.5);
+  }
+  .frame-shell img{
+    display:block; max-width:min(78vw, 980px); max-height:74vh; object-fit:contain;
+  }
+  .empty-state{
+    text-align:center; color:var(--text-dim); max-width:360px;
+  }
+  .empty-state .glyph{
+    font-family:var(--mono); font-size:11px; color:var(--text-faint);
+    letter-spacing:.08em; text-transform:uppercase; margin-bottom:10px;
+  }
+  .empty-state h2{ font-size:16px; color:var(--text); font-weight:600; margin:0 0 8px; }
+  .empty-state p{ font-size:13px; line-height:1.6; margin:0 0 18px; }
+
+  .frame-tag{
+    position:absolute; top:10px; left:10px;
+    font-family:var(--mono); font-size:11px; color:var(--text-dim);
+    background:rgba(10,13,16,.7); border:1px solid var(--border-soft);
+    padding:3px 8px; border-radius:5px; backdrop-filter:blur(4px);
+  }
+
+  /* sidebar */
+  .sidebar{
+    width:290px; flex-shrink:0; border-left:1px solid var(--border);
+    background:var(--panel); display:flex; flex-direction:column;
+    padding:18px 16px; gap:18px; overflow-y:auto;
+  }
+  .sec-label{
+    font-family:var(--mono); font-size:10px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--text-faint); margin-bottom:10px;
+  }
+
+  .progress-row{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
+  .progress-row .count{ font-family:var(--mono); font-size:20px; font-weight:600; }
+  .progress-row .total{ font-family:var(--mono); font-size:12px; color:var(--text-faint); }
+  .progress-bar{ height:4px; border-radius:2px; background:var(--border-soft); overflow:hidden; }
+  .progress-bar i{ display:block; height:100%; background:var(--straight); width:0%; transition:width .15s; }
+  .reviewed-note{ font-size:11px; color:var(--text-dim); margin-top:6px; }
+
+  .direction-grid{ display:flex; flex-direction:column; gap:8px; }
+  .dir-btn{
+    display:flex; align-items:center; gap:10px;
+    border:1px solid var(--border); background:var(--panel-2);
+    border-radius:8px; padding:10px 12px; cursor:pointer;
+    transition:transform .08s, border-color .12s, background .12s;
+  }
+  .dir-btn:active{ transform:scale(.98); }
+  .dir-btn .swatch{
+    width:14px; height:14px; border-radius:4px; flex-shrink:0;
+    border:1px solid rgba(255,255,255,.15);
+  }
+  .dir-btn .label{ flex:1; font-size:13px; font-weight:600; }
+  .dir-btn .key{
+    font-family:var(--mono); font-size:10.5px; color:var(--text-faint);
+    border:1px solid var(--border-soft); border-radius:4px; padding:2px 6px;
+  }
+  .dir-btn[data-active="1"]{ border-color: var(--accent); background: var(--accent-bg); }
+  .dir-btn[data-dir="straight"]{ --accent:var(--straight); --accent-bg:rgba(73,211,196,.12); }
+  .dir-btn[data-dir="left"]{ --accent:var(--left); --accent-bg:rgba(163,146,255,.12); }
+  .dir-btn[data-dir="right"]{ --accent:var(--right); --accent-bg:rgba(255,180,84,.12); }
+  .dir-btn[data-dir="straight"] .swatch{ background:var(--straight); }
+  .dir-btn[data-dir="left"] .swatch{ background:var(--left); }
+  .dir-btn[data-dir="right"] .swatch{ background:var(--right); }
+  .dir-btn[data-active="1"] .key{ color:var(--accent); border-color:var(--accent); }
+
+  .skip-btn{
+    display:flex; align-items:center; gap:10px;
+    border:1px dashed var(--border); background:transparent;
+    border-radius:8px; padding:9px 12px; cursor:pointer; color:var(--text-dim);
+    font-size:12.5px;
+  }
+  .skip-btn[data-active="1"]{ border-color:var(--danger); color:var(--danger); border-style:solid; background:rgba(255,107,107,.08); }
+  .skip-btn .key{ margin-left:auto; font-family:var(--mono); font-size:10.5px; color:var(--text-faint); }
+
+  .nav-row{ display:flex; gap:8px; }
+  .nav-row .btn{ flex:1; }
+
+  .exports{ display:flex; flex-direction:column; gap:8px; }
+
+  .hint-list{ display:flex; flex-direction:column; gap:5px; }
+  .hint-list div{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-dim); }
+  .hint-list kbd{
+    font-family:var(--mono); font-size:10.5px; color:var(--text-dim);
+    border:1px solid var(--border-soft); border-radius:4px; padding:1px 6px;
+  }
+
+  /* bottom telemetry strip */
+  .stripbar{
+    flex-shrink:0; border-top:1px solid var(--border); background:#0D1216;
+    padding:10px 18px 14px;
+  }
+  .stripbar .strip-head{
+    display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;
+  }
+  .stripbar .strip-head span{ font-family:var(--mono); font-size:10px; color:var(--text-faint); letter-spacing:.08em; text-transform:uppercase; }
+  canvas#strip{ width:100%; height:34px; display:block; cursor:pointer; border-radius:4px; }
+
+  ::-webkit-scrollbar{ width:8px; }
+  ::-webkit-scrollbar-thumb{ background:#222A31; border-radius:4px; }
+
+  @media (max-width: 760px){
+    .sidebar{ width:230px; }
+    .frame-shell img{ max-width:100%; }
+  }
+</style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="brand">
+      <span class="mark"></span>
+      <h1>Label Console</h1>
+      <span>hướng đi khả dĩ / frame</span>
+    </div>
+    <div class="filepicker">
+      <input type="file" id="folderInput" webkitdirectory directory multiple accept="image/*">
+      <input type="file" id="filesInput" multiple accept="image/*">
+      <input type="file" id="importInput" accept="application/json">
+      <button class="btn primary" id="pickFolderBtn">Chọn thư mục ảnh</button>
+      <button class="btn ghost" id="pickFilesBtn">Chọn nhiều ảnh</button>
+      <button class="btn ghost" id="importBtn">Nhập JSON có sẵn</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="stage" id="stage">
+      <div class="empty-state" id="emptyState">
+        <div class="glyph">chưa có dữ liệu</div>
+        <h2>Chưa chọn thư mục ảnh</h2>
+        <p>Chọn thư mục chứa các frame đã chụp từ camera JetRacer. Ảnh sẽ được sắp theo tên tự nhiên (frame_0001, frame_0002, …). Mọi xử lý diễn ra ngay trong trình duyệt, không tải ảnh lên đâu cả.</p>
+        <button class="btn primary" id="emptyPickBtn">Chọn thư mục ảnh</button>
+      </div>
+    </div>
+
+    <div class="sidebar" id="sidebar" style="display:none;">
+      <div>
+        <div class="sec-label">Tiến độ</div>
+        <div class="progress-row">
+          <span class="count" id="curIndex">0</span>
+          <span class="total">/ <span id="totalCount">0</span> frame</span>
+        </div>
+        <div class="progress-bar"><i id="progressFill"></i></div>
+        <div class="reviewed-note" id="reviewedNote">Đã duyệt: 0</div>
+      </div>
+
+      <div>
+        <div class="sec-label">Hướng khả dĩ</div>
+        <div class="direction-grid">
+          <div class="dir-btn" data-dir="straight" data-active="1">
+            <span class="swatch"></span><span class="label">Thẳng</span><span class="key">1</span>
+          </div>
+          <div class="dir-btn" data-dir="left" data-active="0">
+            <span class="swatch"></span><span class="label">Rẽ trái</span><span class="key">2</span>
+          </div>
+          <div class="dir-btn" data-dir="right" data-active="0">
+            <span class="swatch"></span><span class="label">Rẽ phải</span><span class="key">3</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="skip-btn" id="skipBtn" data-active="0">
+          <span>Bỏ qua frame (mờ / lỗi)</span><span class="key">0</span>
+        </div>
+      </div>
+
+      <div class="nav-row">
+        <button class="btn" id="prevBtn">← Trước</button>
+        <button class="btn" id="nextBtn">Sau →</button>
+      </div>
+
+      <div>
+        <div class="sec-label">Xuất dữ liệu</div>
+        <div class="exports">
+          <button class="btn" id="exportJsonBtn">Xuất JSON</button>
+          <button class="btn" id="exportCsvBtn">Xuất CSV</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="sec-label">Phím tắt</div>
+        <div class="hint-list">
+          <div><span>Bật/tắt Thẳng · Trái · Phải</span><kbd>1 2 3</kbd></div>
+          <div><span>Bỏ qua frame</span><kbd>0</kbd></div>
+          <div><span>Frame trước / sau</span><kbd>← →</kbd></div>
+          <div><span>Xác nhận & sang frame kế</span><kbd>Space</kbd></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stripbar" id="stripbar" style="display:none;">
+    <div class="strip-head">
+      <span>Dải thời gian video</span>
+      <span id="stripHint">nhấp để nhảy tới frame</span>
+    </div>
+    <canvas id="strip" height="34"></canvas>
+  </div>
+
+<script>
+(function(){
+  const COLORS = { straight:[73,211,196], left:[163,146,255], right:[255,180,84], skip:[90,100,114] };
+
+  let files = [];          // sorted array of File
+  let labels = {};         // filename -> {straight,left,right,skip}
+  let reviewed = new Set();
+  let index = 0;
+  let currentUrl = null;
+
+  const stage = document.getElementById('stage');
+  const emptyState = document.getElementById('emptyState');
+  const sidebar = document.getElementById('sidebar');
+  const stripbar = document.getElementById('stripbar');
+  const stripCanvas = document.getElementById('strip');
+  const curIndexEl = document.getElementById('curIndex');
+  const totalCountEl = document.getElementById('totalCount');
+  const progressFill = document.getElementById('progressFill');
+  const reviewedNote = document.getElementById('reviewedNote');
+  const skipBtn = document.getElementById('skipBtn');
+  const dirBtns = Array.from(document.querySelectorAll('.dir-btn'));
+
+  function naturalCompare(a, b){
+    const ax = a.match(/(\d+|\D+)/g) || [];
+    const bx = b.match(/(\d+|\D+)/g) || [];
+    const len = Math.max(ax.length, bx.length);
+    for(let i=0;i<len;i++){
+      const av = ax[i] || '', bv = bx[i] || '';
+      const an = parseInt(av,10), bn = parseInt(bv,10);
+      if(!isNaN(an) && !isNaN(bn)){
+        if(an !== bn) return an - bn;
+      } else if(av !== bv){
+        return av < bv ? -1 : 1;
+      }
+    }
+    return 0;
+  }
+
+  function loadFileList(list){
+    const imgs = Array.from(list).filter(f => f.type.startsWith('image/'));
+    if(imgs.length === 0){
+      alert('Không tìm thấy ảnh nào trong lựa chọn này.');
+      return;
+    }
+    imgs.sort((a,b) => naturalCompare(a.webkitRelativePath || a.name, b.webkitRelativePath || b.name));
+    files = imgs;
+    labels = {};
+    reviewed = new Set();
+    files.forEach(f => { labels[f.name] = { straight:true, left:false, right:false, skip:false }; });
+    index = 0;
+    emptyState.style.display = 'none';
+    sidebar.style.display = 'flex';
+    stripbar.style.display = 'block';
+    totalCountEl.textContent = files.length;
+    renderFrame();
+    drawStrip();
+  }
+
+  function renderFrame(){
+    const f = files[index];
+    if(!f) return;
+    if(currentUrl) URL.revokeObjectURL(currentUrl);
+    currentUrl = URL.createObjectURL(f);
+
+    stage.innerHTML =
+      '<div class="frame-shell"><span class="frame-tag">' + escapeHtml(f.name) + '</span>' +
+      '<img id="frameImg" src="' + currentUrl + '" alt="' + escapeHtml(f.name) + '"></div>';
+
+    curIndexEl.textContent = (index + 1);
+    progressFill.style.width = (((index+1)/files.length) * 100).toFixed(1) + '%';
+    reviewedNote.textContent = 'Đã duyệt: ' + reviewed.size + ' / ' + files.length;
+
+    const l = labels[f.name];
+    dirBtns.forEach(btn => {
+      const dir = btn.getAttribute('data-dir');
+      btn.setAttribute('data-active', l[dir] ? '1' : '0');
+    });
+    skipBtn.setAttribute('data-active', l.skip ? '1' : '0');
+  }
+
+  function escapeHtml(s){
+    return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function toggle(dir){
+    const f = files[index];
+    if(!f) return;
+    labels[f.name][dir] = !labels[f.name][dir];
+    renderFrame();
+    drawStrip();
+  }
+
+  function toggleSkip(){
+    const f = files[index];
+    if(!f) return;
+    labels[f.name].skip = !labels[f.name].skip;
+    renderFrame();
+    drawStrip();
+  }
+
+  function goTo(newIndex, markReviewed){
+    if(files.length === 0) return;
+    if(markReviewed) reviewed.add(files[index].name);
+    index = Math.max(0, Math.min(files.length - 1, newIndex));
+    renderFrame();
+    drawStrip();
+  }
+
+  function drawStrip(){
+    if(files.length === 0) return;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = stripCanvas.getBoundingClientRect();
+    stripCanvas.width = rect.width * dpr;
+    stripCanvas.height = 34 * dpr;
+    const ctx = stripCanvas.getContext('2d');
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,rect.width,34);
+
+    const n = files.length;
+    const barW = rect.width / n;
+    for(let i=0;i<n;i++){
+      const f = files[i];
+      const l = labels[f.name];
+      const isReviewed = reviewed.has(f.name);
+      let color;
+      if(l.skip){
+        color = COLORS.skip;
+      } else {
+        const active = ['straight','left','right'].filter(d => l[d]);
+        if(active.length === 0){ color = [42,49,57]; }
+        else {
+          const sum = active.reduce((acc,d) => [acc[0]+COLORS[d][0], acc[1]+COLORS[d][1], acc[2]+COLORS[d][2]], [0,0,0]);
+          color = sum.map(v => Math.round(v/active.length));
+        }
+      }
+      const alpha = isReviewed ? 1 : 0.35;
+      ctx.fillStyle = 'rgba(' + color.join(',') + ',' + alpha + ')';
+      ctx.fillRect(Math.floor(i*barW), 0, Math.ceil(barW)+0.5, 34);
+    }
+    // current index marker
+    const markerX = index * barW;
+    ctx.fillStyle = '#F4F7FA';
+    ctx.fillRect(markerX, 0, Math.max(2, barW), 3);
+    ctx.fillRect(markerX, 31, Math.max(2, barW), 3);
+  }
+
+  stripCanvas.addEventListener('click', (e) => {
+    const rect = stripCanvas.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    const target = Math.floor(ratio * files.length);
+    goTo(target, true);
+  });
+  window.addEventListener('resize', drawStrip);
+
+  dirBtns.forEach(btn => btn.addEventListener('click', () => toggle(btn.getAttribute('data-dir'))));
+  skipBtn.addEventListener('click', toggleSkip);
+
+  document.getElementById('prevBtn').addEventListener('click', () => goTo(index - 1, true));
+  document.getElementById('nextBtn').addEventListener('click', () => goTo(index + 1, true));
+
+  document.addEventListener('keydown', (e) => {
+    if(files.length === 0) return;
+    if(e.key === '1'){ toggle('straight'); }
+    else if(e.key === '2'){ toggle('left'); }
+    else if(e.key === '3'){ toggle('right'); }
+    else if(e.key === '0'){ toggleSkip(); }
+    else if(e.key === 'ArrowLeft'){ goTo(index - 1, true); }
+    else if(e.key === 'ArrowRight'){ goTo(index + 1, true); }
+    else if(e.key === ' '){ e.preventDefault(); goTo(index + 1, true); }
+  });
+
+  // file pickers
+  const folderInput = document.getElementById('folderInput');
+  const filesInput = document.getElementById('filesInput');
+  const importInput = document.getElementById('importInput');
+
+  document.getElementById('pickFolderBtn').addEventListener('click', () => folderInput.click());
+  document.getElementById('emptyPickBtn').addEventListener('click', () => folderInput.click());
+  document.getElementById('pickFilesBtn').addEventListener('click', () => filesInput.click());
+  document.getElementById('importBtn').addEventListener('click', () => importInput.click());
+
+  folderInput.addEventListener('change', (e) => loadFileList(e.target.files));
+  filesInput.addEventListener('change', (e) => loadFileList(e.target.files));
+
+  importInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try{
+        const data = JSON.parse(reader.result);
+        const arr = Array.isArray(data) ? data : data.labels;
+        arr.forEach(item => {
+          if(labels[item.filename]){
+            labels[item.filename] = {
+              straight: !!item.straight, left: !!item.left,
+              right: !!item.right, skip: !!item.skip
+            };
+            reviewed.add(item.filename);
+          }
+        });
+        renderFrame();
+        drawStrip();
+        alert('Đã nhập ' + arr.length + ' nhãn từ file JSON.');
+      } catch(err){
+        alert('File JSON không hợp lệ: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  function buildExportArray(){
+    return files.map(f => ({
+      filename: f.name,
+      straight: labels[f.name].straight ? 1 : 0,
+      left: labels[f.name].left ? 1 : 0,
+      right: labels[f.name].right ? 1 : 0,
+      skip: labels[f.name].skip ? 1 : 0
+    }));
+  }
+
+  function download(filename, content, mime){
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  document.getElementById('exportJsonBtn').addEventListener('click', () => {
+    if(files.length === 0) return;
+    const data = buildExportArray();
+    download('lane_direction_labels.json', JSON.stringify(data, null, 2), 'application/json');
+  });
+
+  document.getElementById('exportCsvBtn').addEventListener('click', () => {
+    if(files.length === 0) return;
+    const rows = ['filename,straight,left,right,skip'];
+    buildExportArray().forEach(r => rows.push([r.filename,r.straight,r.left,r.right,r.skip].join(',')));
+    download('lane_direction_labels.csv', rows.join('\n'), 'text/csv');
+  });
+})();
+</script>
+</body>
+</html>
