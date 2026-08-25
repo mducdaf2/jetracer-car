@@ -1,135 +1,116 @@
 import time
 
-
 class TrafficFSM:
+    def __init__(
+        self,
+        conf_threshold=0.5,
+        min_consecutive_frames=1,
+        state_timeout=5.0,
+        min_bbox_area_sign=2000,
+        min_bbox_area_traffic_light=1000,
+        roi_x_min=0.15,
+        roi_x_max=0.85,
+    ):
+        self.conf_threshold = conf_threshold
+        self.min_consecutive_frames = min_consecutive_frames
+        self.state_timeout = state_timeout
+        self.min_bbox_area_sign = min_bbox_area_sign
+        self.min_bbox_area_traffic_light = min_bbox_area_traffic_light
+        self.roi_x_min = roi_x_min
+        self.roi_x_max = roi_x_max
 
-  def __init__(
-      self,
-      default_state='FORWARD',
-      conf_threshold=0.5,
-      min_consecutive_frames=3,
-      state_timeout=2.0,
-      min_bbox_area=900,  # Diện tích box tối thiểu (vd: 30x30 px) để loại biển xa/làn bên
-      roi_x_min=0.05,  # Bỏ 15% lề trái ảnh
-      roi_x_max=0.95,  # Bỏ 15% lề phải ảnh
-  ):
-    """FSM có thêm bộ lọc vị trí và kích thước biển báo."""
-    self.STATE_STOP = 'STOP'
-    self.STATE_FORWARD = 'FORWARD'
-    self.STATE_TURN_LEFT = 'TURN_LEFT'
-    self.STATE_TURN_RIGHT = 'TURN_RIGHT'
+        self.traffic_light_classes = {"red-light", "green-light"}
+        
+        self.priority = {
+            "red-light": 5,
+            "prohibition-sign": 4,
+            "left-turn-sign": 3,
+            "right-turn-sign": 3,
+            "straight-ahead-sign": 3,
+            "green-light": 1,
+        }
 
-    self.default_state = default_state
-    self.conf_threshold = conf_threshold
-    self.min_consecutive_frames = min_consecutive_frames
-    self.state_timeout = state_timeout
+        self.ALL_DIRECTIONS = ["LEFT", "FORWARD", "RIGHT"]
+        self.reset()
 
-    # Cấu hình bộ lọc không gian (Spatial Filter)
-    self.min_bbox_area = min_bbox_area
-    self.roi_x_min = roi_x_min
-    self.roi_x_max = roi_x_max
+    def reset(self):
+        """Reset trạng thái ban đầu - Dùng khi test ảnh tĩnh trên Notebook"""
+        self.active_sign_directions = list(self.ALL_DIRECTIONS)
+        self.is_stopped = False
+        self.last_detection_time = time.time()
 
-    # Tracking
-    self.current_state = self.default_state
-    self.last_detected_label = None
-    self.consecutive_count = 0
-    self.last_detection_time = time.time()
+    def _parse_box(self, det, img_w):
+        b = det.get("bbox") or det.get("box")
+        if not b: return 0, 0
+        if "box" in det:
+            return b[2] * b[3], (b[0] + b[2] / 2.0) / img_w
+        return (b[2] - b[0]) * (b[3] - b[1]), ((b[0] + b[2]) / 2.0) / img_w
 
-    self.class_to_state = {
-        'red-light': self.STATE_STOP,
-        'prohibition-sign': self.STATE_STOP,
-        'green-light': self.STATE_FORWARD,
-        'straight-ahead-sign': self.STATE_FORWARD,
-        'left-turn-sign': self.STATE_TURN_LEFT,
-        'right-turn-sign': self.STATE_TURN_RIGHT,
-    }
+    def _is_valid_bbox(self, det, img_w, img_h):
+        area, center_x = self._parse_box(det, img_w)
+        if area == 0: return False
 
-    self.priority = {
-        'red-light': 4,
-        'prohibition-sign': 4,
-        'green-light': 3,
-        'left-turn-sign': 2,
-        'right-turn-sign': 2,
-        'straight-ahead-sign': 1,
-    }
+        min_area = (
+            self.min_bbox_area_traffic_light
+            if det.get("class_name") in self.traffic_light_classes
+            else self.min_bbox_area_sign
+        )
+        # Chỉ lọc theo Area và ROI X
+        return (area >= min_area) and (self.roi_x_min <= center_x <= self.roi_x_max)
 
-  def _is_valid_spatial_detection(self, det, img_w, img_h):
-    """Kiểm tra biển báo có nằm trong vùng di chuyển thực tế của xe không.
+    def _get_valid_detections(self, detections, img_w, img_h):
+        return [
+            d for d in detections
+            if d.get("confidence", 0.0) >= self.conf_threshold
+            and d.get("class_name") in self.priority
+            and self._is_valid_bbox(d, img_w, img_h)
+        ]
 
-    Format bbox chuẩn: [x1, y1, x2, y2] hoặc d['bbox']
-    """
-    if 'bbox' not in det:
-      return True  # Nếu model không trả về bbox thì bỏ qua bước lọc này
+    def update(self, detections, img_w=640, img_h=480):
+        now = time.time()
+        valid_dets = self._get_valid_detections(detections, img_w, img_h)
 
-    x1, y1, x2, y2 = det['bbox']
-    w = x2 - x1
-    h = y2 - y1
-    area = w * h
+        if valid_dets:
+            self.last_detection_time = now
 
-    # 1. Lọc theo diện tích (quá nhỏ = ở xa hoặc làn khác)
-    if area < self.min_bbox_area:
-      return False
+            # 1. CẬP NHẬT ĐÈN GIAO THÔNG
+            has_red = any(d["class_name"] == "red-light" for d in valid_dets)
+            has_green = any(d["class_name"] == "green-light" for d in valid_dets)
 
-    # 2. Lọc theo ROI (Biển báo nằm quá sát mép trái/phải màn hình)
-    center_x_ratio = ((x1 + x2) / 2.0) / img_w
-    if not (self.roi_x_min <= center_x_ratio <= self.roi_x_max):
-      return False
+            if has_red and has_green:
+                red_det = max((d for d in valid_dets if d["class_name"] == "red-light"), key=lambda d: self._parse_box(d, img_w)[0])
+                green_det = max((d for d in valid_dets if d["class_name"] == "green-light"), key=lambda d: self._parse_box(d, img_w)[0])
+                self.is_stopped = self._parse_box(red_det, img_w)[0] > self._parse_box(green_det, img_w)[0]
+            elif has_red:
+                self.is_stopped = True
+            elif has_green:
+                self.is_stopped = False
 
-    return True
+            # 2. CẬP NHẬT BIỂN BÁO HƯỚNG ĐI
+            sign_dets = [d for d in valid_dets if d["class_name"] not in self.traffic_light_classes]
+            if sign_dets:
+                sign_dets.sort(
+                    key=lambda d: (self.priority.get(d["class_name"], 0), self._parse_box(d, img_w)[0]),
+                    reverse=True
+                )
+                best_sign = sign_dets[0]["class_name"]
 
-  def _select_best_detection(self, detections, img_w, img_h):
-    """Lọc các detection hợp lệ cả về Confidence và Vị trí."""
-    valid_dets = []
-    for d in detections:
-      if (
-          d['confidence'] >= self.conf_threshold
-          and d['class_name'] in self.class_to_state
-      ):
+                if best_sign == "left-turn-sign":
+                    self.active_sign_directions = ["LEFT"]
+                elif best_sign == "right-turn-sign":
+                    self.active_sign_directions = ["RIGHT"]
+                elif best_sign == "straight-ahead-sign":
+                    self.active_sign_directions = ["FORWARD"]
+                elif best_sign == "prohibition-sign":
+                    # Biển cấm đi thẳng -> Chỉ cho phép Rẽ Trái và Rẽ Phải
+                    self.active_sign_directions = ["LEFT", "RIGHT"]
 
-        # Kiểm tra điều kiện vị trí không gian
-        if self._is_valid_spatial_detection(d, img_w, img_h):
-          valid_dets.append(d)
+        else:
+            if now - self.last_detection_time > self.state_timeout:
+                self.active_sign_directions = list(self.ALL_DIRECTIONS)
+                self.is_stopped = False
 
-    if not valid_dets:
-      return None
-
-    # Ưu tiên: 1. Loại biển (Priority) -> 2. Biển to nhất (gần xe nhất) -> 3. Confidence
-    valid_dets.sort(
-        key=lambda d: (
-            self.priority.get(d['class_name'], 0),
-            (
-                (d['bbox'][2] - d['bbox'][0]) * (d['bbox'][3] - d['bbox'][1])
-                if 'bbox' in d
-                else 0
-            ),
-            d['confidence'],
-        ),
-        reverse=True,
-    )
-    return valid_dets[0]['class_name']
-
-  def update(self, detections, img_w=640, img_h=480):
-    """Cập nhật FSM.
-
-    Cần truyền thêm chiều rộng (img_w) và chiều cao (img_h) của ảnh.
-    """
-    now = time.time()
-    best_label = self._select_best_detection(detections, img_w, img_h)
-
-    if best_label is not None:
-      if best_label == self.last_detected_label:
-        self.consecutive_count += 1
-      else:
-        self.last_detected_label = best_label
-        self.consecutive_count = 1
-
-      if self.consecutive_count >= self.min_consecutive_frames:
-        self.current_state = self.class_to_state[best_label]
-        self.last_detection_time = now
-    else:
-      if now - self.last_detection_time > self.state_timeout:
-        self.current_state = self.default_state
-        self.last_detected_label = None
-        self.consecutive_count = 0
-
-    return self.current_state
+        if self.is_stopped:
+            return ["STOP"]
+        
+        return self.active_sign_directions

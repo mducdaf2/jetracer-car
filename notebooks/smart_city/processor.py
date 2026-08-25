@@ -144,10 +144,7 @@ class RoadProcessor:
         return img
 
     def postprocess(self, raw_output):
-        """Hỗ trợ cả trường hợp Model trả về 1 Logit (Sigmoid) hoặc 2 Logits
-
-        (Softmax).
-        """
+        """Hỗ trợ cả trường hợp Model trả về 1 Logit (Sigmoid) hoặc 2 Logits (Softmax)."""
         logits = np.array(raw_output).squeeze()
 
         # Trường hợp 1: Model trả về 1 giá trị duy nhất (Sigmoid output)
@@ -155,11 +152,12 @@ class RoadProcessor:
             logit_val = float(logits)
             prob_blocked = 1.0 / (1.0 + np.exp(-logit_val))
 
-        # Trường hợp 2: Model trả về 2 giá trị [logit_free, logit_blocked] (Softmax output)
+        # Trường hợp 2: Model trả về 2 giá trị [0: BLOCKED, 1: FREE] (Softmax output)
         else:
             exp_logits = np.exp(logits - np.max(logits))  # Stable Softmax
             probs = exp_logits / np.sum(exp_logits)
-            prob_blocked = float(probs[1])  # Giả định index 1 là BLOCKED
+            
+            prob_blocked = float(probs[0])  # Index 0: BLOCKED
 
         # Xác định trạng thái đường
         status = 'BLOCKED' if prob_blocked >= self.threshold else 'FREE'

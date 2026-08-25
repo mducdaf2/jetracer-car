@@ -38,9 +38,7 @@ class CameraStream:
             print(f"Bỏ qua khởi tạo ROS Node: {e}")
 
         # Đăng ký Subscriber
-        self.sub = rospy.Subscriber(
-            topic_name, Image, self._camera_callback, queue_size=1
-        )
+        self.sub = rospy.Subscriber(topic_name, Image, self._camera_callback)
         rospy.loginfo(f"📷 Đã Subscribe vào Topic: {topic_name}")
 
         # Khởi tạo VideoWriter nếu bật record
